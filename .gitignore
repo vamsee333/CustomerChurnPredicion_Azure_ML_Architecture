@@ -1,0 +1,36 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook checkpoint files
+.ipynb_checkpoints/
+
+# Azure config and secret files
+azure/config.json
+azure/*.json
+
+# Data and generated model artifacts
+data/
+models/
+*.csv
+*.parquet
+*.h5
+*.joblib
+*.pkl
+*.onnx
+
+# IDE/editor files
+.vscode/
+*.code-workspace
+
+# Environment files
+.env
+.python-version
+
+# OS files
+.DS_Store
+Thumbs.db
