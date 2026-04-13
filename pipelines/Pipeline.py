@@ -1,4 +1,5 @@
 from azure.ai.ml import MLClient, Input, Output
+from azure.ai.ml.entities import Environment
 from azure.ai.ml.dsl import pipeline
 from azure.ai.ml import command
 from azure.ai.ml.constants import AssetTypes
@@ -30,7 +31,18 @@ ml_client = MLClient(
 )
 
 # Using Curated Azure ML environment with sklearn + mlflow pre-installed
-ENV = "azureml://registries/azureml/environments/sklearn-1.5/versions/4"
+
+
+
+ENV = Environment(
+    name="churn-pipeline-env-fixed",
+    description="Churn pipeline Environment",
+    conda_file="./env/conda.yml",                 # path relative to this script
+    image="mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04",
+)
+ml_client.environments.create_or_update(ENV)
+
+#ENV = "churn-pipeline-env:2"  # Use the version created above
 
 # Step definitions 
 
@@ -73,6 +85,22 @@ train_step = command(
     compute=COMPUTE_NAME,
 )
 
+## If quality check fails, this step errors and the pipeline stops
+promote_step = command(
+    name="promote",
+    display_name="Quality gate + promote to Registry",
+    code="./src",
+    command=(
+        "python Modelpromoter.py "
+        "--model_output ${{inputs.model_output}}"
+    ),
+    inputs={
+        "model_output": Input(type=AssetTypes.URI_FOLDER),
+    },
+    environment=ENV,
+    compute=COMPUTE_NAME,
+)
+
 predict_step = command(
     name="predict",
     display_name="Batch churn predictions",
@@ -97,7 +125,7 @@ predict_step = command(
 # Pipeline graph 
 @pipeline(
     name="churn_prediction_pipeline",
-    description="Preprocess → Train (LR / RF / High-Recall LR) → Predict",
+    description="Preprocess - Train - Quality Check for deployment - Predict",
     default_compute=COMPUTE_NAME,
 )
 def churn_pipeline(raw_churn_data):
@@ -105,6 +133,9 @@ def churn_pipeline(raw_churn_data):
 
     train = train_step(
         processed_data=preprocess.outputs.processed_data,
+    )
+    promote = promote_step(
+        model_output=train.outputs.model_output,
     )
 
     predict = predict_step(
