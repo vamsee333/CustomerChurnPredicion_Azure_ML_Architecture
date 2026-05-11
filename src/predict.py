@@ -5,6 +5,7 @@ import pandas as pd
 import joblib
 from sklearn.preprocessing import LabelEncoder
 
+## A temp comment to verify the test pipeline
 
 def build_inference_row(sample_input: dict, feature_cols: list) -> pd.DataFrame:
     """
