@@ -20,7 +20,7 @@ WORKSPACE_NAME   = config["workspace_name"]
 
 
 
-COMPUTE_NAME     = "ChurnComputeInstance"
+COMPUTE_NAME     = "AzChurnComputeInstance"
 CHURN_DATA_URI   = "azureml:customer_churn_data:1"  
 
 ml_client = MLClient(

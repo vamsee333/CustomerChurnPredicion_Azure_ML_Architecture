@@ -134,6 +134,11 @@ def main():
         # Save feature list 
         with open(os.path.join(args.model_output, 'feature_columns.json'), 'w') as f:
             json.dump(feature_cols, f)
+        
+        mlflow.log_artifact(
+            os.path.join(args.model_output, 'feature_columns.json'),
+                artifact_path="model"  
+            )
 
         # save model_config.json
         # predict.py will read this so inference uses the exact same settings

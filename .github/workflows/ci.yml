@@ -1,0 +1,98 @@
+
+# CI — Runs on every Pull Request targeting main
+
+# What it does:
+#   1. Installs Python dependencies (no Azure SDK needed — pure unit tests)
+#   2. Runs pytest with coverage
+#   3. Fails the PR if any test fails or coverage drops below 80%
+#   4. Posts a coverage summary as a PR comment
+
+
+name: CI — Unit Tests & Coverage
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      
+      - "src/**.py"
+      - "tests/**.py"
+      - "env/conda.yml"
+      - ".github/workflows/ci.yml"
+
+jobs:
+  test:
+    name: pytest (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        # Test on the same Python version as your conda.yml
+        python-version: ["3.10"]
+
+    steps:
+      
+      # 1. Checkout code
+      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      
+      # 2. Set up Python
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      
+      # 3. Install dependencies
+    
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            scikit-learn==1.5.0 \
+            pandas==2.2.2 \
+            numpy==1.26.4 \
+            joblib==1.4.2 \
+            pytest==8.2.0 \
+            pytest-cov==5.0.0
+
+      
+      # 4. Run tests with coverage
+      #    --cov-fail-under=80 fails the job if overall coverage drops below 80%
+  
+      - name: Run pytest with coverage
+        env:
+          PYTHONPATH: src
+        run: |
+          pytest tests/test_pipeline.py \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=80 \
+            -v \
+            --tb=short
+
+      
+      # 5. Upload coverage report as an artifact so you can download it from
+      #    the Actions tab and inspect line-by-line misses
+      
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()   # upload even if tests failed which is useful for debugging
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+     
+      # 6. Post a coverage summary to the PR as a comment
+      #    Uses the official coverage-comment action 
+      - name: Post coverage comment on PR
+        uses: py-cov-action/python-coverage-comment-action@v3
+        if: github.event_name == 'pull_request'
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COVERAGE_DATA_FILE: coverage.xml
