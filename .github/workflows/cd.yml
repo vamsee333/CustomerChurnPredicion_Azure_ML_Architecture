@@ -29,7 +29,7 @@ name: CD — Submit Pipeline & Update Endpoint
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       # Only redeploy when pipeline source code changes — not README / docs
       - "src/**.py"
