@@ -1,8 +1,3 @@
-Totally valid — YAML syntax is unforgiving (indentation errors break everything silently) and there's a lot of keywords to learn. But the good news is you don't need to memorise it. You need to understand the **structure**, and then you can read and write it confidently.
-
-Let me break it down from scratch using your actual `ci.yml`.
-
----
 
 ## The mental model — a yml file is just a job description
 
