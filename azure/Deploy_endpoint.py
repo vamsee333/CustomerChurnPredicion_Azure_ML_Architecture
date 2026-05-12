@@ -25,7 +25,7 @@ from azure.ai.ml.entities import (
  
  
 config_path = os.path.join(os.path.dirname(__file__), "../.azureml/config.json")
-# config_path = "config.json"
+#config_path = "../.azureml/config.json"
 with open(config_path) as f:
     config = json.load(f)
  
@@ -41,7 +41,7 @@ print(f"Connected to Azure ML Workspace: {config['workspace_name']}")
 
 print("Subscription:", ml_client.subscription_id)
  
-ENDPOINT_NAME   = "churn-prediction-endpoint"
+ENDPOINT_NAME   = "churn-predictions-endpoint"
 DEPLOYMENT_NAME = "champion"
 MODEL_NAME      = "customer-churn-model"   
           
@@ -54,17 +54,25 @@ model_ref = f"azureml:{MODEL_NAME}:{prod_version.version}"
  
 # Create or update the endpoint
 # It has no compute — that lives in the deployment below.
-endpoint = ManagedOnlineEndpoint(
+## Added Try, catch to support re-running the script without having to delete the endpoint first. If the endpoint already exists, it will be updated with the new deployment.
+from azure.core.exceptions import ResourceNotFoundError
+
+
+try:
+    endpoint = ml_client.online_endpoints.get(ENDPOINT_NAME)
+    print("Endpoint already exists.")
+
+except ResourceNotFoundError:
+    endpoint = ManagedOnlineEndpoint(
     name=ENDPOINT_NAME,
     description="Real-time churn prediction endpoint for customer churn prediction project",
     auth_mode="key",
     tags={"project": "customer-churn"},
-)
- 
-print(f"Creating / updating endpoint: {ENDPOINT_NAME}")
-end_point = ml_client.online_endpoints.begin_create_or_update(endpoint)
-end_point.result()   # blocks until provisioning completes
-print("Endpoint ready.")
+        )
+    print(f"Creating / updating endpoint: {ENDPOINT_NAME}")
+    end_point = ml_client.online_endpoints.begin_create_or_update(endpoint)
+    end_point.result()   # blocks until provisioning completes
+    print("Endpoint ready.")
  
  
 # Create or update the champion deployment
@@ -80,7 +88,7 @@ deployment = ManagedOnlineDeployment(
     ),
  
     # Reuse the same env as registered
-    environment="azureml:churn-pipeline-env-fixed:4",
+    environment="azureml:churn-pipeline-env-fixed:1",
  
     instance_type="Standard_DS2_v2",
     instance_count=1,
