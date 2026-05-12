@@ -4,7 +4,7 @@ import joblib
 from predict import build_inference_row
 
 # declared for monkey-patching in tests
-
+# Test comment
 MODEL        = None
 FEATURE_COLS = None
 
@@ -19,7 +19,7 @@ def init():
     feat_path = model_path.replace("model.pkl", "feature_columns.json")
 
     global MODEL, FEATURE_COLS
-    
+
     MODEL        = joblib.load(model_path)
     FEATURE_COLS = json.load(open(feat_path))
     print(f"[init] Model loaded from: {model_path}")
