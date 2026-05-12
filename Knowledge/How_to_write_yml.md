@@ -1,4 +1,3 @@
-
 ## The mental model — a yml file is just a job description
 
 Think of it like writing instructions for a brand new intern who has a fresh laptop and knows nothing about your project. You tell them:

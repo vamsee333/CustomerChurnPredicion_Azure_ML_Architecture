@@ -1,0 +1,313 @@
+
+# CD — Runs on every push to main (i.e. after a PR is merged)
+#
+# What it does:
+#   1. Authenticates to Azure using a Service Principal stored in GitHub Secrets
+#   2. Submits Pipeline.py as an Azure ML pipeline job
+#      (preprocess → train → quality gate → predict)
+#   3. If the pipeline job succeeds, runs Deploy_endpoint.py to update the
+#      managed online endpoint with the new production-tagged model
+#   4. Sends a Slack notification (pass or fail) — optional but recommended
+#
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   AZURE_CREDENTIALS   — JSON output of: az ad sp create-for-rbac --sdk-auth
+#   AZURE_SUBSCRIPTION  — 0bdd62b0-5112-4e6a-be8a-749e2630e08b
+#   AZURE_RESOURCE_GROUP — RG1
+#   AZURE_WORKSPACE     — Vamsee_AzureML
+#   SLACK_WEBHOOK_URL   — (optional) incoming webhook from your Slack workspace
+#
+# How to create AZURE_CREDENTIALS:
+#   az ad sp create-for-rbac \
+#     --name "churn-pipeline-sp" \
+#     --role Contributor \
+#     --scopes /subscriptions/0bdd62b0-5112-4e6a-be8a-749e2630e08b/resourceGroups/RG1 \
+#     --sdk-auth
+#   Copy the JSON output → paste as the AZURE_CREDENTIALS secret value.
+
+
+name: CD — Submit Pipeline & Update Endpoint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # Only redeploy when pipeline source code changes — not README / docs
+      - "src/**.py"
+      - "env/conda.yml"
+      - "Pipeline.py"
+      - "Deploy_endpoint.py"
+      - ".github/workflows/cd.yml"
+
+  # Allow manual trigger from the Actions tab — useful for emergency retrains
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for manual trigger (e.g. drift detected)"
+        required: false
+        default: "Manual trigger"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # JOB 1: Submit the Azure ML Training Pipeline
+  # ---------------------------------------------------------------------------
+  submit-pipeline:
+    name: Submit Azure ML Pipeline
+    runs-on: ubuntu-latest
+    outputs:
+      # Pass the job name to the deploy job so it can poll status
+      pipeline_job_name: ${{ steps.submit.outputs.job_name }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Log in to Azure using the Service Principal secret
+      # -----------------------------------------------------------------------
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # -----------------------------------------------------------------------
+      # Install full ML + Azure SDK dependencies
+      # -----------------------------------------------------------------------
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            scikit-learn==1.5.0 \
+            pandas==2.2.2 \
+            numpy==1.26.4 \
+            joblib==1.4.2 \
+            mlflow==2.14.1 \
+            azure-ai-ml==1.18.0 \
+            azure-identity==1.17.1 \
+            azureml-mlflow==1.57.0
+
+      # -----------------------------------------------------------------------
+      # Write config.json so Pipeline.py can find the workspace
+      # config.json is gitignored — credentials come from secrets only
+      # -----------------------------------------------------------------------
+      - name: Write Azure ML config.json
+        run: |
+          mkdir -p azure
+          cat > azure/config.json <<EOF
+          {
+            "subscription_id": "${{ secrets.AZURE_SUBSCRIPTION }}",
+            "resource_group":  "${{ secrets.AZURE_RESOURCE_GROUP }}",
+            "workspace_name":  "${{ secrets.AZURE_WORKSPACE }}"
+          }
+          EOF
+
+      # -----------------------------------------------------------------------
+      # Submit Pipeline.py and capture the job name for the next job
+      # Pipeline.py already prints "Job name  : <name>" — we parse that line
+      # -----------------------------------------------------------------------
+      - name: Submit Azure ML Pipeline
+        id: submit
+        run: |
+          OUTPUT=$(python Pipeline.py 2>&1)
+          echo "$OUTPUT"
+          JOB_NAME=$(echo "$OUTPUT" | grep "^Job name" | awk '{print $NF}')
+          echo "job_name=$JOB_NAME" >> $GITHUB_OUTPUT
+          echo "Pipeline submitted: $JOB_NAME"
+
+      # -----------------------------------------------------------------------
+      # Poll until the pipeline job reaches a terminal state
+      # Azure ML pipeline jobs can take 15-40 minutes on a cold compute cluster
+      # We poll every 60 s with a 60-minute timeout
+      # -----------------------------------------------------------------------
+      - name: Wait for pipeline to complete
+        id: wait
+        run: |
+          JOB_NAME="${{ steps.submit.outputs.job_name }}"
+          echo "Polling job: $JOB_NAME"
+          MAX_WAIT=3600   # 60 minutes
+          INTERVAL=60
+          ELAPSED=0
+
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            STATUS=$(az ml job show \
+              --name "$JOB_NAME" \
+              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+              --workspace-name ${{ secrets.AZURE_WORKSPACE }} \
+              --query "status" -o tsv 2>/dev/null)
+
+            echo "  [${ELAPSED}s] Status: $STATUS"
+
+            case "$STATUS" in
+              Completed)
+                echo "Pipeline completed successfully."
+                exit 0
+                ;;
+              Failed|Canceled|NotResponding)
+                echo "::error::Pipeline job $JOB_NAME ended with status: $STATUS"
+                exit 1
+                ;;
+            esac
+
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+
+          echo "::error::Timed out waiting for pipeline job $JOB_NAME after ${MAX_WAIT}s"
+          exit 1
+
+  # ---------------------------------------------------------------------------
+  # JOB 2: Update the Managed Online Endpoint
+  # Only runs if the pipeline job completed successfully
+  # ---------------------------------------------------------------------------
+  update-endpoint:
+    name: Update Managed Online Endpoint
+    runs-on: ubuntu-latest
+    needs: submit-pipeline   # hard dependency — never deploy a failed model
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            azure-ai-ml==1.18.0 \
+            azure-identity==1.17.1
+
+      - name: Write Azure ML config.json
+        run: |
+          mkdir -p .azureml
+          cat > .azureml/config.json <<EOF
+          {
+            "subscription_id": "${{ secrets.AZURE_SUBSCRIPTION }}",
+            "resource_group":  "${{ secrets.AZURE_RESOURCE_GROUP }}",
+            "workspace_name":  "${{ secrets.AZURE_WORKSPACE }}"
+          }
+          EOF
+
+      # -----------------------------------------------------------------------
+      # Deploy_endpoint.py finds the production-tagged model and updates
+      # the champion deployment.  Azure ML does a zero-downtime rolling update.
+      # -----------------------------------------------------------------------
+      - name: Deploy new model to endpoint
+        run: |
+          python Deploy_endpoint.py
+          echo "Endpoint updated: churn-predictions-endpoint / champion"
+
+      # -----------------------------------------------------------------------
+      # Smoke test — send one real request to the live endpoint and verify
+      # we get a valid JSON response back with the expected keys.
+      # Uses the API key stored in GitHub Secrets.
+      # -----------------------------------------------------------------------
+      - name: Smoke test endpoint
+        env:
+          ENDPOINT_KEY: ${{ secrets.CHURN_ENDPOINT_KEY }}
+        run: |
+          python - <<'EOF'
+          import urllib.request, json, os, sys
+
+          url = "https://churn-predictions-endpoint.eastus2.inference.ml.azure.com/score"
+          key = os.environ["ENDPOINT_KEY"]
+
+          payload = {
+              "input_data": [{
+                  "Age": 45, "Contract": "Month-to-month",
+                  "Monthly Charge": 89.50, "Tenure in Months": 6,
+                  "Internet Type": "Fiber Optic",
+                  "Payment Method": "Credit Card (automatic)",
+                  "Offer": "No Offer", "Gender": "Male",
+                  "Partner": "Yes", "Dependents": "No",
+                  "Phone Service": "Yes", "Multiple Lines": "No",
+                  "Online Security": "No", "Online Backup": "No",
+                  "Device Protection Plan": "No", "Premium Tech Support": "No",
+                  "Streaming TV": "Yes", "Streaming Movies": "Yes",
+                  "Streaming Music": "No", "Unlimited Data": "Yes",
+                  "Paperless Billing": "Yes", "Referred a Friend": "No",
+                  "Number of Referrals": 0, "Avg Monthly GB Download": 45,
+                  "Avg Monthly Long Distance Charges": 0.0,
+                  "CLTV": 3200, "Number of Dependents": 0,
+                  "Satisfaction Score": 2,
+              }]
+          }
+
+          req = urllib.request.Request(
+              url,
+              data=json.dumps(payload).encode(),
+              headers={
+                  "Content-Type": "application/json",
+                  "Authorization": f"Bearer {key}",
+              },
+          )
+
+          try:
+              with urllib.request.urlopen(req) as resp:
+                  result = json.loads(resp.read())
+              print("Smoke test response:", result)
+
+              assert "churn_prediction" in result, \
+                  f"Missing 'churn_prediction' in response: {result}"
+              assert result["churn_prediction"] in (0, 1), \
+                  f"Invalid prediction value: {result['churn_prediction']}"
+
+              print("Smoke test PASSED")
+          except Exception as e:
+              print(f"Smoke test FAILED: {e}", file=sys.stderr)
+              sys.exit(1)
+          EOF
+
+  # ---------------------------------------------------------------------------
+  # JOB 3: Notify — runs always, reports pass/fail to Slack
+  # Skip this job if SLACK_WEBHOOK_URL secret is not set
+  # ---------------------------------------------------------------------------
+  notify:
+    name: Slack Notification
+    runs-on: ubuntu-latest
+    needs: [submit-pipeline, update-endpoint]
+    if: always()
+
+    steps:
+      - name: Send Slack notification
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          PIPELINE_STATUS: ${{ needs.submit-pipeline.result }}
+          DEPLOY_STATUS:   ${{ needs.update-endpoint.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$PIPELINE_STATUS" = "success" ] && [ "$DEPLOY_STATUS" = "success" ]; then
+            COLOR="good"
+            MESSAGE="✅ Churn pipeline deployed successfully to *churn-predictions-endpoint*"
+          else
+            COLOR="danger"
+            MESSAGE="Churn pipeline CD failed — pipeline: $PIPELINE_STATUS, deploy: $DEPLOY_STATUS"
+          fi
+
+          curl -s -X POST "$SLACK_WEBHOOK" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"attachments\": [{
+                \"color\": \"$COLOR\",
+                \"text\": \"$MESSAGE\",
+                \"fields\": [
+                  {\"title\": \"Branch\", \"value\": \"${{ github.ref_name }}\", \"short\": true},
+                  {\"title\": \"Run\", \"value\": \"<$RUN_URL|View logs>\", \"short\": true}
+                ]
+              }]
+            }"
