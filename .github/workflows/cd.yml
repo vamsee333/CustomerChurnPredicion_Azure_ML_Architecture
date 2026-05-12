@@ -100,7 +100,7 @@ jobs:
           mkdir -p azure
           cat > azure/config.json <<EOF
           {
-            "subscription_id": "${{ secrets.AZURE_SUBSCRIPTION }}",
+            "subscription_id": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
             "resource_group":  "${{ secrets.AZURE_RESOURCE_GROUP }}",
             "workspace_name":  "${{ secrets.AZURE_WORKSPACE }}"
           }
@@ -196,7 +196,7 @@ jobs:
           mkdir -p .azureml
           cat > .azureml/config.json <<EOF
           {
-            "subscription_id": "${{ secrets.AZURE_SUBSCRIPTION }}",
+            "subscription_id": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
             "resource_group":  "${{ secrets.AZURE_RESOURCE_GROUP }}",
             "workspace_name":  "${{ secrets.AZURE_WORKSPACE }}"
           }
