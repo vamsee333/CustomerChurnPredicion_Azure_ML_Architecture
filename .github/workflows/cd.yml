@@ -34,7 +34,7 @@ on:
       # Only redeploy when pipeline source code changes — not README / docs
       - "src/**.py"
       - "env/conda.yml"
-      - "Pipeline.py"
+      - "pipelines/Pipeline.py"
       - "Deploy_endpoint.py"
       - ".github/workflows/cd.yml"
 
@@ -113,7 +113,7 @@ jobs:
       - name: Submit Azure ML Pipeline
         id: submit
         run: |
-          OUTPUT=$(python Pipeline.py 2>&1)
+          OUTPUT=$(python pipelines/Pipeline.py 2>&1)
           echo "$OUTPUT"
           JOB_NAME=$(echo "$OUTPUT" | grep "^Job name" | awk '{print $NF}')
           echo "job_name=$JOB_NAME" >> $GITHUB_OUTPUT
@@ -208,7 +208,7 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Deploy new model to endpoint
         run: |
-          python Deploy_endpoint.py
+          python azure/Deploy_endpoint.py
           echo "Endpoint updated: churn-predictions-endpoint / champion"
 
       # -----------------------------------------------------------------------
