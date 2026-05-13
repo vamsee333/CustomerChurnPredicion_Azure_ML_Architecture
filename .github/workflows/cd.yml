@@ -89,7 +89,8 @@ jobs:
             mlflow==2.14.1 \
             azure-ai-ml==1.18.0 \
             azure-identity==1.17.1 \
-            azureml-mlflow==1.57.0
+            azureml-mlflow==1.57.0 \
+            marshmallow==3.20.1
 
       # -----------------------------------------------------------------------
       # Write config.json so Pipeline.py can find the workspace
@@ -190,7 +191,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install \
             azure-ai-ml==1.18.0 \
-            azure-identity==1.17.1
+            azure-identity==1.17.1 \
+            azureml-mlflow==1.57.0 \
+            marshmallow==3.20.1
 
       - name: Write Azure ML config.json
         run: |
