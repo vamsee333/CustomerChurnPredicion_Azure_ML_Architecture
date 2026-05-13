@@ -98,8 +98,8 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Write Azure ML config.json
         run: |
-          mkdir -p azure
-          cat > azure/config.json <<EOF
+          mkdir -p .azureml
+          cat > .azureml/config.json <<EOF
           {
             "subscription_id": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
             "resource_group":  "${{ secrets.AZURE_RESOURCE_GROUP }}",
