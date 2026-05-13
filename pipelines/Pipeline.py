@@ -49,7 +49,7 @@ ml_client = MLClient(
 ENV = Environment(
     name="churn-pipeline-env-fixed",
     description="Churn pipeline Environment",
-    conda_file="./env/conda.yml",                 # path relative to this script
+    conda_file=os.path.join(_HERE, "../env/conda.yml"),                 # path relative to this script
     image="mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04",
 )
 ml_client.environments.create_or_update(ENV)
@@ -61,7 +61,7 @@ ml_client.environments.create_or_update(ENV)
 preprocess_step = command(
     name="preprocess",
     display_name="Preprocess churn data",
-    code="./src",
+    code=os.path.join(_HERE, "../src"),
     command=(
         "python preprocessing.py "
         "--input_data  ${{inputs.raw_data}} "
@@ -80,7 +80,7 @@ preprocess_step = command(
 train_step = command(
     name="train",
     display_name="Train churn models",
-    code="./src",
+    code=os.path.join(_HERE, "../src"),
     command=(
         "python train.py "
         "--processed_data ${{inputs.processed_data}} "
@@ -101,7 +101,7 @@ train_step = command(
 promote_step = command(
     name="promote",
     display_name="Quality gate + promote to Registry",
-    code="./src",
+    code=os.path.join(_HERE, "../src"),
     command=(
         "python Modelpromoter.py "
         "--model_output ${{inputs.model_output}}"
@@ -116,7 +116,7 @@ promote_step = command(
 predict_step = command(
     name="predict",
     display_name="Batch churn predictions",
-    code="./src",
+    code=os.path.join(_HERE, "../src"),
     command=(
         "python predict.py "
         "--processed_data     ${{inputs.processed_data}} "
