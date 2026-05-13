@@ -8,9 +8,21 @@ import json
 import os
 
 # Load configuration from config file
-config_path = os.path.join(os.path.dirname(__file__), "../.azure/config.json")
-with open(config_path, "r") as f:
-    config = json.load(f)
+# Read config — works both locally (from .azureml/config.json) and in CI (from env vars)
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+if os.environ.get("AZURE_SUBSCRIPTION_ID"):
+    # Running in CI — read from environment variables directly
+    config = {
+        "subscription_id": os.environ["AZURE_SUBSCRIPTION_ID"],
+        "resource_group":  os.environ["AZURE_RESOURCE_GROUP"],
+        "workspace_name":  os.environ["AZURE_WORKSPACE"],
+    }
+else:
+    # Running locally — read from .azureml/config.json
+    config_path = os.path.join(_HERE, "../.azureml/config.json")
+    with open(config_path, "r") as f:
+        config = json.load(f)
 
 
 # Retrieving Azure ML workspace details from config

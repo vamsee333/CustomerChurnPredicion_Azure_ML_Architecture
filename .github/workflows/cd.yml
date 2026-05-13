@@ -92,20 +92,7 @@ jobs:
             azureml-mlflow==1.57.0 \
             marshmallow==3.20.1
 
-      # -----------------------------------------------------------------------
-      # Write config.json so Pipeline.py can find the workspace
-      # config.json is gitignored — credentials come from secrets only
-      # -----------------------------------------------------------------------
-      - name: Write Azure ML config.json
-        run: |
-          mkdir -p .azureml
-          cat > .azureml/config.json <<EOF
-          {
-            "subscription_id": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
-            "resource_group":  "${{ secrets.AZURE_RESOURCE_GROUP }}",
-            "workspace_name":  "${{ secrets.AZURE_WORKSPACE }}"
-          }
-          EOF
+      
 
       # -----------------------------------------------------------------------
       # Submit Pipeline.py and capture the job name for the next job
@@ -113,6 +100,10 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Submit Azure ML Pipeline
         id: submit
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          AZURE_WORKSPACE: ${{ secrets.AZURE_WORKSPACE }}
         run: |
           python pipelines/Pipeline.py 2>&1 | tee pipeline_output.txt
           EXIT_CODE=${PIPESTATUS[0]}
