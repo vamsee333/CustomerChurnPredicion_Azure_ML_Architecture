@@ -1,0 +1,25 @@
+name: churn-pipeline-env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip         
+  - pip:
+    # ML training
+    - setuptools==69.5.1 
+    - scikit-learn==1.5.0
+    - pandas==2.2.2
+    - numpy==1.26.4
+    - joblib==1.4.2
+    - marshmallow==3.20.1
+
+    # MLflow tracking + registry
+    - mlflow==2.14.1
+    - azureml-mlflow==1.57.0       # connects mlflow to your Azure ML workspace
+
+    # Azure ML SDK — needed by model_promoter.py
+    - azure-ai-ml==1.18.0
+    - azure-identity==1.17.1
+    - azureml-inference-server-http==1.2.2
+    - shap==0.45.0
