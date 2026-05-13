@@ -8,7 +8,7 @@ import json
 import os
 
 # Load configuration from config file
-config_path = os.path.join(os.path.dirname(__file__), "../azure/config.json")
+config_path = os.path.join(os.path.dirname(__file__), "../.azure/config.json")
 with open(config_path, "r") as f:
     config = json.load(f)
 
