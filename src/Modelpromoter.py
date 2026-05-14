@@ -46,7 +46,8 @@ def get_ml_client() -> MLClient:
             from azure.identity import ManagedIdentityCredential
             credential = ManagedIdentityCredential()
  
-            return MLClient(
+            
+        return MLClient(
             credential=credential,
             subscription_id=os.environ["AZUREML_ARM_SUBSCRIPTION"],
             resource_group_name=os.environ["AZUREML_ARM_RESOURCEGROUP"],
