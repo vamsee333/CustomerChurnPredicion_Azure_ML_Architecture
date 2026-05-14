@@ -60,7 +60,7 @@ print(f"  Resource group: {RESOURCE_GROUP}")
 print(f"  Workspace    : {WORKSPACE_NAME}\n")
 
 
-COMPUTE_NAME   = "AzChurnComputeInstance"
+COMPUTE_NAME   = "ChurnComputeCluster"
 CHURN_DATA_URI = "azureml:customer_churn_data:1"
 
 ml_client = MLClient(
