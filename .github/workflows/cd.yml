@@ -277,7 +277,7 @@ jobs:
           python - <<'PYEOF'
           import urllib.request, json, os, sys
 
-          url = "https://churn-prediction-endpoint.eastus2.inference.ml.azure.com/score"
+          url = "https://churn-predictions-endpoint.eastus2.inference.ml.azure.com/score"
           key = os.environ.get("ENDPOINT_KEY", "")
           if not key:
               print("ERROR: CHURN_ENDPOINT_KEY secret is not set.")
