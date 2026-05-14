@@ -22,7 +22,7 @@ if os.environ.get("AZURE_SUBSCRIPTION_ID"):
     config = {
         "subscription_id": os.environ["AZURE_SUBSCRIPTION_ID"],
         "resource_group":  os.environ["AZURE_RESOURCE_GROUP"],
-        "workspace_name":  os.environ["AZURE_WORKSPACE"],
+        "workspace_name":  os.environ["AZURE_ML_WORKSPACE"],
     }
     print("Config source: environment variables (CI mode)")
 else:
