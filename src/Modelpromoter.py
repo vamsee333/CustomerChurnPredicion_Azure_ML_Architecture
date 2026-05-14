@@ -16,7 +16,7 @@ import os
 from azure.ai.ml import MLClient
 from azure.ai.ml.entities import Model
 from azure.identity import DefaultAzureCredential
-
+from azure.identity import  ManagedIdentityCredential
 
 # Quality gate thresholds
 
@@ -28,31 +28,57 @@ def get_ml_client() -> MLClient:
     """
     Returns an authenticated MLClient that works both inside an Azure ML
     pipeline job and when run locally.
-    """
-    # ── Inside an Azure ML pipeline job ─────────────────────────────────────
-    # AZUREML_ARM_WORKSPACE_NAME is always set by the Azure ML job runtime.
-    # We use AzureMLOnBehalfOfCredential which reads the OBO token Azure ML
-    # injects — this is the ONLY credential that reliably works inside a job
-    # when the compute cluster has no user-assigned managed identity.
-    if os.environ.get("AZUREML_ARM_WORKSPACE_NAME"):
-        print("Credential: AzureMLOnBehalfOfCredential (pipeline job mode)")
-        try:
-            from azure.ai.ml.identity import AzureMLOnBehalfOfCredential
-            credential = AzureMLOnBehalfOfCredential()
-        except ImportError:
-            # Older SDK versions — fall back to ManagedIdentityCredential
-            # which works if the cluster has a system-assigned managed identity
-            print("  AzureMLOnBehalfOfCredential not available, trying ManagedIdentityCredential")
-            from azure.identity import ManagedIdentityCredential
-            credential = ManagedIdentityCredential()
  
-            
+    Prerequisites for pipeline job mode:
+      1. Compute cluster must have a system-assigned managed identity:
+            az ml compute update --name ChurnComputeCluster \
+              --resource-group RG1 --workspace-name Vamsee_AzureML \
+              --identity-type SystemAssigned
+      2. That identity must have AzureML Data Scientist role on the workspace:
+            az role assignment create --assignee <principal_id> \
+              --role "AzureML Data Scientist" --scope <workspace_resource_id>
+    """
+    # Inside an Azure ML pipeline job 
+    # AZUREML_ARM_WORKSPACE_NAME is always present in a pipeline job environment.
+    # ManagedIdentityCredential uses the cluster's system-assigned identity 
+    # no tokens, no secrets, no config files needed on the compute node.
+    
+    if os.environ.get("AZUREML_ARM_WORKSPACE_NAME"):
+        print("Credential: ManagedIdentityCredential (pipeline job mode)")
+        print(f"  Workspace : {os.environ['AZUREML_ARM_WORKSPACE_NAME']}")
+        print(f"  RG        : {os.environ['AZUREML_ARM_RESOURCEGROUP']}")
+ 
         return MLClient(
-            credential=credential,
+            credential=ManagedIdentityCredential(),
             subscription_id=os.environ["AZUREML_ARM_SUBSCRIPTION"],
             resource_group_name=os.environ["AZUREML_ARM_RESOURCEGROUP"],
             workspace_name=os.environ["AZUREML_ARM_WORKSPACE_NAME"],
-            )
+        )
+ 
+    # Local development
+    # DefaultAzureCredential works locally via az login.
+    print("Credential: DefaultAzureCredential (local mode)")
+    credential = DefaultAzureCredential()
+ 
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+    local_config = os.path.join(_HERE, "../.azureml/config.json")
+    if os.path.exists(local_config):
+        print(f"Config: {local_config}")
+        with open(local_config) as f:
+            cfg = json.load(f)
+        return MLClient(
+            credential=credential,
+            subscription_id=cfg["subscription_id"],
+            resource_group_name=cfg["resource_group"],
+            workspace_name=cfg["workspace_name"],
+        )
+ 
+    raise FileNotFoundError(
+        "Could not find workspace credentials.\n"
+        "  Running locally? Create .azureml/config.json with:\n"
+        "    { 'subscription_id': '...', 'resource_group': '...', 'workspace_name': '...' }\n"
+        "  In a pipeline job? Ensure AZUREML_ARM_WORKSPACE_NAME is set (it should be automatic)."
+    )
 
 
 def promote_model(model_output_dir: str) -> None:
