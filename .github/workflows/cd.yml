@@ -100,14 +100,14 @@ jobs:
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
-          AZURE_WORKSPACE: ${{ secrets.AZURE_WORKSPACE }}
+          AZURE_ML_WORKSPACE: ${{ secrets.AZURE_ML_WORKSPACE }}
         run: |
           python - <<'PYEOF'
           import os, sys
           secrets = {
               "AZURE_SUBSCRIPTION_ID": os.environ.get("AZURE_SUBSCRIPTION_ID", ""),
               "AZURE_RESOURCE_GROUP":  os.environ.get("AZURE_RESOURCE_GROUP", ""),
-              "AZURE_WORKSPACE":       os.environ.get("AZURE_WORKSPACE", ""),
+              "AZURE_ML_WORKSPACE":    os.environ.get("AZURE_ML_WORKSPACE", ""),
           }
           missing = [k for k, v in secrets.items() if not v.strip()]
           if missing:
@@ -116,7 +116,7 @@ jobs:
               sys.exit(1)
           # Print workspace identity — not a secret, safe to log
           print(f"Secrets OK")
-          print(f"  Workspace     : {secrets['AZURE_WORKSPACE']}")
+          print(f"  Workspace     : {secrets['AZURE_ML_WORKSPACE']}")
           print(f"  Resource group: {secrets['AZURE_RESOURCE_GROUP']}")
           print(f"  Subscription  : {secrets['AZURE_SUBSCRIPTION_ID'][:8]}...")
           PYEOF
@@ -131,7 +131,7 @@ jobs:
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
-          AZURE_WORKSPACE: ${{ secrets.AZURE_WORKSPACE }}
+          AZURE_ML_WORKSPACE: ${{ secrets.AZURE_ML_WORKSPACE }}
         run: |
           python pipelines/Pipeline.py 2>&1 | tee pipeline_output.txt
           EXIT_CODE=${PIPESTATUS[0]}
@@ -161,7 +161,7 @@ jobs:
             STATUS=$(az ml job show \
               --name "$JOB_NAME" \
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --workspace-name ${{ secrets.AZURE_WORKSPACE }} \
+              --workspace-name ${{ secrets.AZURE_ML_WORKSPACE }} \
               --query "status" -o tsv 2>/dev/null)
 
             echo "  [${ELAPSED}s] Status: $STATUS"
@@ -232,7 +232,7 @@ jobs:
           {
           "subscription_id": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
           "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
-          "workspace_name": "${{ secrets.AZURE_WORKSPACE }}"
+          "workspace_name": "${{ secrets.AZURE_ML_WORKSPACE }}"
           }
           EOF
 
