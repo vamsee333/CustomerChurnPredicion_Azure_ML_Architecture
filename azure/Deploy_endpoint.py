@@ -73,7 +73,7 @@ print(f"Resource group         : {config['resource_group']}")
 print(f"Subscription           : {config['subscription_id'][:8]}...\n")
 
 
-ENDPOINT_NAME   = "churn-prediction-endpoint"
+ENDPOINT_NAME   = "churn-predictions-endpoint"
 DEPLOYMENT_NAME = "champion"
 MODEL_NAME      = "customer-churn-model"
 
