@@ -1,29 +1,34 @@
-
-# CD — Runs on every push to main (i.e. after a PR is merged)
+# .github/workflows/cd.yml
+# =============================================================================
+# CD — Runs on every push to master (i.e. after a PR is merged)
 #
 # What it does:
 #   1. Authenticates to Azure using a Service Principal stored in GitHub Secrets
-#   2. Submits Pipeline.py as an Azure ML pipeline job
+#   2. Submits pipelines/Pipeline.py as an Azure ML pipeline job
 #      (preprocess → train → quality gate → predict)
-#   3. If the pipeline job succeeds, runs Deploy_endpoint.py to update the
-#      managed online endpoint with the new production-tagged model
-#   4. Sends a Slack notification (pass or fail) — optional but recommended
+#   3. If the pipeline job succeeds, runs azure/Deploy_endpoint.py to update
+#      the managed online endpoint with the new production-tagged model
+#   4. Runs a smoke test against the live endpoint to verify it responds
 #
-# Required GitHub Secrets (Settings → Secrets → Actions):
-#   AZURE_CREDENTIALS   — JSON output of: az ad sp create-for-rbac --sdk-auth
-#   AZURE_SUBSCRIPTION  — 0bdd62b0-5112-4e6a-be8a-749e2630e08b
-#   AZURE_RESOURCE_GROUP — RG1
-#   AZURE_WORKSPACE     — Vamsee_AzureML
-#   SLACK_WEBHOOK_URL   — (optional) incoming webhook from your Slack workspace
+# Required GitHub Secrets (Settings → Secrets and variables → Actions):
+#   AZURE_CREDENTIALS      — JSON output of: az ad sp create-for-rbac --sdk-auth
+#   AZURE_SUBSCRIPTION_ID  — e.g. 0bdd62b0-5112-4e6a-be8a-749e2630e08b
+#   AZURE_RESOURCE_GROUP   — e.g. RG1
+#   AZURE_WORKSPACE        — e.g. Vamsee_AzureML
+#   CHURN_ENDPOINT_KEY     — Primary key from the managed online endpoint
 #
-# How to create AZURE_CREDENTIALS:
+# How to create AZURE_CREDENTIALS (run once in your terminal):
 #   az ad sp create-for-rbac \
 #     --name "churn-pipeline-sp" \
 #     --role Contributor \
-#     --scopes /subscriptions/0bdd62b0-5112-4e6a-be8a-749e2630e08b/resourceGroups/RG1 \
+#     --scopes /subscriptions/<SUBSCRIPTION_ID>/resourceGroups/RG1 \
 #     --sdk-auth
-#   Copy the JSON output → paste as the AZURE_CREDENTIALS secret value.
-
+#   Copy the full JSON output → paste as the AZURE_CREDENTIALS secret value.
+#
+# NOTE ON SECRET NAMES:
+#   Pipeline.py reads AZURE_SUBSCRIPTION_ID (with _ID suffix) from env vars.
+#   All secrets in this file use that same name to stay consistent.
+# =============================================================================
 
 name: CD — Submit Pipeline & Update Endpoint
 
@@ -31,11 +36,11 @@ on:
   push:
     branches: [master]
     paths:
-      # Only redeploy when pipeline source code changes — not README / docs
+      # Only redeploy when source code or pipeline config changes — not docs
       - "src/**.py"
       - "env/conda.yml"
       - "pipelines/Pipeline.py"
-      - "Deploy_endpoint.py"
+      - "azure/Deploy_endpoint.py"
       - ".github/workflows/cd.yml"
 
   # Allow manual trigger from the Actions tab — useful for emergency retrains
@@ -54,24 +59,18 @@ jobs:
     name: Submit Azure ML Pipeline
     runs-on: ubuntu-latest
     outputs:
-      # Pass the job name to the deploy job so it can poll status
       pipeline_job_name: ${{ steps.submit.outputs.job_name }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # -----------------------------------------------------------------------
       # Log in to Azure using the Service Principal secret
-      # -----------------------------------------------------------------------
       - name: Azure Login
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # -----------------------------------------------------------------------
-      # Install full ML + Azure SDK dependencies
-      # -----------------------------------------------------------------------
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
@@ -92,11 +91,40 @@ jobs:
             azureml-mlflow==1.57.0 \
             marshmallow==3.20.1
 
-      
+      # -----------------------------------------------------------------------
+      # Validate secrets BEFORE running Pipeline.py
+      # If any secret is missing/empty, this step fails with a clear message
+      # instead of a cryptic Azure ResourceNotFound error later.
+      # -----------------------------------------------------------------------
+      - name: Validate required secrets
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          AZURE_WORKSPACE: ${{ secrets.AZURE_WORKSPACE }}
+        run: |
+          python - <<'PYEOF'
+          import os, sys
+          secrets = {
+              "AZURE_SUBSCRIPTION_ID": os.environ.get("AZURE_SUBSCRIPTION_ID", ""),
+              "AZURE_RESOURCE_GROUP":  os.environ.get("AZURE_RESOURCE_GROUP", ""),
+              "AZURE_WORKSPACE":       os.environ.get("AZURE_WORKSPACE", ""),
+          }
+          missing = [k for k, v in secrets.items() if not v.strip()]
+          if missing:
+              print(f"ERROR: These GitHub Secrets are missing or empty: {missing}")
+              print("Go to: repo → Settings → Secrets and variables → Actions")
+              sys.exit(1)
+          # Print workspace identity — not a secret, safe to log
+          print(f"Secrets OK")
+          print(f"  Workspace     : {secrets['AZURE_WORKSPACE']}")
+          print(f"  Resource group: {secrets['AZURE_RESOURCE_GROUP']}")
+          print(f"  Subscription  : {secrets['AZURE_SUBSCRIPTION_ID'][:8]}...")
+          PYEOF
 
       # -----------------------------------------------------------------------
-      # Submit Pipeline.py and capture the job name for the next job
-      # Pipeline.py already prints "Job name  : <name>" — we parse that line
+      # Submit Pipeline.py
+      # Env vars are injected here — Pipeline.py reads them directly,
+      # no config.json file needed on the runner
       # -----------------------------------------------------------------------
       - name: Submit Azure ML Pipeline
         id: submit
@@ -109,20 +137,23 @@ jobs:
           EXIT_CODE=${PIPESTATUS[0]}
           JOB_NAME=$(grep "^Job name" pipeline_output.txt | awk '{print $NF}')
           echo "job_name=$JOB_NAME" >> $GITHUB_OUTPUT
-          echo "Pipeline submitted: $JOB_NAME"
+          echo "Submitted job: $JOB_NAME"
           exit $EXIT_CODE
 
       # -----------------------------------------------------------------------
-      # Poll until the pipeline job reaches a terminal state
-      # Azure ML pipeline jobs can take 15-40 minutes on a cold compute cluster
-      # We poll every 60 s with a 60-minute timeout
+      # Poll the job status every 60 s until it reaches a terminal state.
+      # Azure ML pipeline jobs can take 15-40 min on a cold compute cluster.
       # -----------------------------------------------------------------------
       - name: Wait for pipeline to complete
-        id: wait
         run: |
           JOB_NAME="${{ steps.submit.outputs.job_name }}"
+          if [ -z "$JOB_NAME" ]; then
+            echo "::error::Job name is empty — pipeline submission likely failed."
+            exit 1
+          fi
           echo "Polling job: $JOB_NAME"
-          MAX_WAIT=3600   # 60 minutes
+
+          MAX_WAIT=3600
           INTERVAL=60
           ELAPSED=0
 
@@ -150,17 +181,17 @@ jobs:
             ELAPSED=$((ELAPSED + INTERVAL))
           done
 
-          echo "::error::Timed out waiting for pipeline job $JOB_NAME after ${MAX_WAIT}s"
+          echo "::error::Timed out after ${MAX_WAIT}s waiting for job $JOB_NAME"
           exit 1
 
   # ---------------------------------------------------------------------------
   # JOB 2: Update the Managed Online Endpoint
-  # Only runs if the pipeline job completed successfully
+  # Hard dependency on Job 1 — never deploys if pipeline failed or was skipped
   # ---------------------------------------------------------------------------
   update-endpoint:
     name: Update Managed Online Endpoint
     runs-on: ubuntu-latest
-    needs: submit-pipeline   # hard dependency — never deploy a failed model
+    needs: submit-pipeline
 
     steps:
       - name: Checkout repository
@@ -186,58 +217,101 @@ jobs:
             azureml-mlflow==1.57.0 \
             marshmallow==3.20.1
 
+      # -----------------------------------------------------------------------
+      # Write .azureml/config.json for Deploy_endpoint.py
+      #
+      # IMPORTANT: The heredoc delimiter is unquoted so ${{ }} expressions
+      # ARE expanded by the shell (that is what we want here).
+      # The JSON content itself has no leading whitespace — heredoc indentation
+      # would be written literally into the file and break json.load().
+      # -----------------------------------------------------------------------
       - name: Write Azure ML config.json
         run: |
           mkdir -p .azureml
           cat > .azureml/config.json <<EOF
           {
-            "subscription_id": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
-            "resource_group":  "${{ secrets.AZURE_RESOURCE_GROUP }}",
-            "workspace_name":  "${{ secrets.AZURE_WORKSPACE }}"
+          "subscription_id": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+          "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
+          "workspace_name": "${{ secrets.AZURE_WORKSPACE }}"
           }
           EOF
 
-      # -----------------------------------------------------------------------
-      # Deploy_endpoint.py finds the production-tagged model and updates
-      # the champion deployment.  Azure ML does a zero-downtime rolling update.
-      # -----------------------------------------------------------------------
+      # Validate the written file before running Deploy_endpoint.py
+      - name: Validate config.json
+        run: |
+          python - <<'PYEOF'
+          import json, sys
+          try:
+              with open(".azureml/config.json") as f:
+                  cfg = json.load(f)
+          except json.JSONDecodeError as e:
+              print(f"ERROR: .azureml/config.json is not valid JSON: {e}")
+              print("This usually means leading whitespace from heredoc indentation.")
+              sys.exit(1)
+          missing = [k for k, v in cfg.items() if not str(v).strip()]
+          if missing:
+              print(f"ERROR: These config values are empty: {missing}")
+              print("Check your GitHub Secrets — names must match exactly.")
+              sys.exit(1)
+          print(f"config.json is valid")
+          print(f"  Workspace     : {cfg['workspace_name']}")
+          print(f"  Resource group: {cfg['resource_group']}")
+          PYEOF
+
+      # Deploy_endpoint.py reads .azureml/config.json and updates the
+      # champion deployment with the latest production-tagged model.
+      # Azure ML performs a zero-downtime rolling update.
       - name: Deploy new model to endpoint
         run: |
           python azure/Deploy_endpoint.py
-          echo "Endpoint updated: churn-predictions-endpoint / champion"
+          echo "Endpoint updated: churn-prediction-endpoint / champion"
 
       # -----------------------------------------------------------------------
-      # Smoke test — send one real request to the live endpoint and verify
-      # we get a valid JSON response back with the expected keys.
-      # Uses the API key stored in GitHub Secrets.
+      # Smoke test — one real HTTP request to the live endpoint.
+      # Verifies the scoring script is responsive and returns expected keys.
       # -----------------------------------------------------------------------
       - name: Smoke test endpoint
         env:
           ENDPOINT_KEY: ${{ secrets.CHURN_ENDPOINT_KEY }}
         run: |
-          python - <<'EOF'
+          python - <<'PYEOF'
           import urllib.request, json, os, sys
 
-          url = "https://churn-predictions-endpoint.eastus2.inference.ml.azure.com/score"
-          key = os.environ["ENDPOINT_KEY"]
+          url = "https://churn-prediction-endpoint.eastus2.inference.ml.azure.com/score"
+          key = os.environ.get("ENDPOINT_KEY", "")
+          if not key:
+              print("ERROR: CHURN_ENDPOINT_KEY secret is not set.")
+              sys.exit(1)
 
           payload = {
               "input_data": [{
-                  "Age": 45, "Contract": "Month-to-month",
-                  "Monthly Charge": 89.50, "Tenure in Months": 6,
+                  "Age": 45,
+                  "Contract": "Month-to-month",
+                  "Monthly Charge": 89.50,
+                  "Tenure in Months": 6,
                   "Internet Type": "Fiber Optic",
                   "Payment Method": "Credit Card (automatic)",
-                  "Offer": "No Offer", "Gender": "Male",
-                  "Partner": "Yes", "Dependents": "No",
-                  "Phone Service": "Yes", "Multiple Lines": "No",
-                  "Online Security": "No", "Online Backup": "No",
-                  "Device Protection Plan": "No", "Premium Tech Support": "No",
-                  "Streaming TV": "Yes", "Streaming Movies": "Yes",
-                  "Streaming Music": "No", "Unlimited Data": "Yes",
-                  "Paperless Billing": "Yes", "Referred a Friend": "No",
-                  "Number of Referrals": 0, "Avg Monthly GB Download": 45,
+                  "Offer": "No Offer",
+                  "Gender": "Male",
+                  "Partner": "Yes",
+                  "Dependents": "No",
+                  "Phone Service": "Yes",
+                  "Multiple Lines": "No",
+                  "Online Security": "No",
+                  "Online Backup": "No",
+                  "Device Protection Plan": "No",
+                  "Premium Tech Support": "No",
+                  "Streaming TV": "Yes",
+                  "Streaming Movies": "Yes",
+                  "Streaming Music": "No",
+                  "Unlimited Data": "Yes",
+                  "Paperless Billing": "Yes",
+                  "Referred a Friend": "No",
+                  "Number of Referrals": 0,
+                  "Avg Monthly GB Download": 45,
                   "Avg Monthly Long Distance Charges": 0.0,
-                  "CLTV": 3200, "Number of Dependents": 0,
+                  "CLTV": 3200,
+                  "Number of Dependents": 0,
                   "Satisfaction Score": 2,
               }]
           }
@@ -252,18 +326,21 @@ jobs:
           )
 
           try:
-              with urllib.request.urlopen(req) as resp:
+              with urllib.request.urlopen(req, timeout=30) as resp:
                   result = json.loads(resp.read())
               print("Smoke test response:", result)
-
               assert "churn_prediction" in result, \
-                  f"Missing 'churn_prediction' in response: {result}"
+                  f"Missing 'churn_prediction' key in response: {result}"
               assert result["churn_prediction"] in (0, 1), \
-                  f"Invalid prediction value: {result['churn_prediction']}"
-
+                  f"Unexpected prediction value: {result['churn_prediction']}"
               print("Smoke test PASSED")
+          except urllib.error.HTTPError as e:
+              body = e.read().decode("utf-8", errors="ignore")
+              print(f"Smoke test FAILED — HTTP {e.code}: {body}", file=sys.stderr)
+              sys.exit(1)
           except Exception as e:
               print(f"Smoke test FAILED: {e}", file=sys.stderr)
               sys.exit(1)
-          EOF
+          PYEOF
 
+ 
