@@ -1,158 +1,184 @@
 """
 Reads run_info.json written by train.py, checks quality gates,
-then promotes the model version to Production using MLClient
+then promotes the model version to Production using MLClient.
 
+Config strategy (same pattern as Pipeline.py):
+  - Inside an Azure ML pipeline job: MLClient.from_config() reads the workspace
+    context that Azure ML automatically injects into every job environment via
+    the AZUREML_ARM_* environment variables. No config file needed.
+  - Running locally: falls back to .azureml/config.json as before.
 """
 
 import argparse
 import json
 import os
-from xml.parsers.expat import model
+
 from azure.ai.ml import MLClient
 from azure.ai.ml.entities import Model
 from azure.identity import DefaultAzureCredential
 
-#  Quality check thresholds
+
+# Quality gate thresholds
+
 MIN_ROC_AUC = 0.80
 MIN_RECALL  = 0.65
 
 
-def get_ml_client():
-    
-    config_path =  "config.json"
-    # config_path = os.path.join(os.path.dirname(__file__), "../azure/config.json")
-    with open(config_path) as f:
-        config = json.load(f)
+def get_ml_client() -> MLClient:
+    """
+    Build an MLClient that works both inside an Azure ML pipeline job
+    and when run locally.
 
-    return MLClient(
-        DefaultAzureCredential(),
-        config["subscription_id"],
-        config["resource_group"],
-        config["workspace_name"],
+    Inside a pipeline job Azure ML injects these env vars automatically:
+        AZUREML_ARM_SUBSCRIPTION, AZUREML_ARM_RESOURCEGROUP,
+        AZUREML_ARM_WORKSPACE_NAME, AZUREML_ARM_PROJECT_NAME
+
+    MLClient.from_config() reads those vars first; if they are absent it
+    falls back to looking for .azureml/config.json on disk.
+    """
+    credential = DefaultAzureCredential()
+
+    # Primary path: works inside every Azure ML pipeline job automatically
+    # because Azure ML injects workspace context into the job environment.
+
+    if os.environ.get("AZUREML_ARM_WORKSPACE_NAME"):
+        print("MLClient: using Azure ML job environment (pipeline mode)")
+        return MLClient(
+            credential=credential,
+            subscription_id=os.environ["AZUREML_ARM_SUBSCRIPTION"],
+            resource_group_name=os.environ["AZUREML_ARM_RESOURCEGROUP"],
+            workspace_name=os.environ["AZUREML_ARM_WORKSPACE_NAME"],
+        )
+
+    # local development — read .azureml/config.json
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+    local_config = os.path.join(_HERE, "../.azureml/config.json")
+    if os.path.exists(local_config):
+        print(f"MLClient: using local config at {local_config}")
+        with open(local_config) as f:
+            cfg = json.load(f)
+        return MLClient(
+            credential=credential,
+            subscription_id=cfg["subscription_id"],
+            resource_group_name=cfg["resource_group"],
+            workspace_name=cfg["workspace_name"],
+        )
+
+    raise FileNotFoundError(
+        "Could not find workspace credentials.\n"
+        "  In a pipeline job: AZUREML_ARM_WORKSPACE_NAME env var should be set automatically.\n"
+        "  Locally: create .azureml/config.json with subscription_id, resource_group, workspace_name."
     )
-    
 
 
-def promote_model(model_output_dir: str):
+def promote_model(model_output_dir: str) -> None:
+    """
+    1. Reads run_info.json written by train.py
+    2. Runs quality gate (ROC-AUC and Recall thresholds)
+    3. Tags the new model version as 'production' in the Azure ML registry
+    4. Tags all previously-production versions as 'archived'
+    """
 
-    # Load metrics written by train.py 
+
+    # Load metrics from train.py output
+
     run_info_path = os.path.join(model_output_dir, "run_info.json")
     if not os.path.exists(run_info_path):
         raise FileNotFoundError(
-            f"run_info.json not found in {model_output_dir}. "
-            "Make sure train.py ran successfully first."
+            f"run_info.json not found in '{model_output_dir}'.\n"
+            "Make sure train.py completed successfully before this step runs."
         )
 
     with open(run_info_path) as f:
         run_info = json.load(f)
 
-    model_name = run_info["model_name"]  
+    model_name = run_info["model_name"]
     roc_auc    = run_info["roc_auc"]
     recall     = run_info["recall"]
     run_id     = run_info["run_id"]
 
-    print(f"\nModel promotion check")
+    print("\nModel promotion check")
     print(f"  Model name : {model_name}")
     print(f"  Run ID     : {run_id}")
-    print(f"  ROC-AUC    : {roc_auc:.4f}  (minimum: {MIN_ROC_AUC})")
-    print(f"  Recall     : {recall:.4f}  (minimum: {MIN_RECALL})")
+    print(f"  ROC-AUC    : {roc_auc:.4f}  (minimum required: {MIN_ROC_AUC})")
+    print(f"  Recall     : {recall:.4f}  (minimum required: {MIN_RECALL})")
 
-    # Quality check
+ 
+    # Quality gate — fail fast, never touch the registry if thresholds missed
+   
     failures = []
     if roc_auc < MIN_ROC_AUC:
         failures.append(f"ROC-AUC {roc_auc:.4f} < minimum {MIN_ROC_AUC}")
     if recall < MIN_RECALL:
-        failures.append(f"Recall {recall:.4f} < minimum {MIN_RECALL}")
+        failures.append(f"Recall  {recall:.4f} < minimum {MIN_RECALL}")
 
     if failures:
         raise ValueError(
-            "\nModel REJECTED because of unmet quality criteria\n"
-            + "\n".join(f"  - {f}" for f in failures)
-            + "\nCurrent Production model is unchanged."
+            "\nModel REJECTED — quality gate failed:\n"
+            + "\n".join(f"  {f}" for f in failures)
+            + "\n\nThe current Production model is unchanged."
         )
 
-    print("\nQuality check passed.")
+    print("\n  Quality gate passed — proceeding to promote.\n")
 
-    
+ 
     ml_client = get_ml_client()
 
-    # ml_client.models.list() returns all versions for this model name.
-    # The latest one is always what train.py just registered.
     versions = list(ml_client.models.list(name=model_name))
     if not versions:
         raise ValueError(
-            f"No model named '{model_name}' found in the registry. "
-            "Check that train.py ran with registered_model_name set correctly."
+            f"No model named '{model_name}' found in the registry.\n"
+            "Check that train.py ran with the correct registered_model_name."
         )
 
-    # versions come back newest-first from the API
+    # list() returns versions newest-first
     latest         = versions[0]
     version_number = latest.version
-    print(f"Found version  : {version_number}")
+    print(f"Latest registered version: {version_number}")
 
+    # ------------------------------------------------------------------
+    # Tag the new version as production
+    # ------------------------------------------------------------------
+    new_model = ml_client.models.get(name=model_name, version=version_number)
 
-    # MLClient does not have built-in Staging/Production stages the way
-    # MlflowClient does. The MLClient equivalent is tags
-    # in the Azure ML Studio Models tab under the Tags column.
-    updated_model = Model(
-        name=model_name,
-        version=version_number,
-        description=(
-            f"Promoted by model_promoter.py"
-            f"ROC-AUC={roc_auc:.4f} | Recall={recall:.4f}"
-            f"run_id={run_id}"
-        ),
-        tags={
-            "stage":       "production",
-            "roc_auc":     str(round(roc_auc, 4)),
-            "recall":      str(round(recall, 4)),
-            "run_id":      run_id,
-            "promoted_by": "model_promoter.py",
-        },
-    )
-    # Get existing model
-    model = ml_client.models.get(
-    name=model_name,
-    version=version_number
+    new_model.tags = {
+        "stage":       "production",
+        "roc_auc":     str(round(roc_auc, 4)),
+        "recall":      str(round(recall, 4)),
+        "run_id":      run_id,
+        "promoted_by": "Modelpromoter.py",
+    }
+    new_model.description = (
+        f"Promoted by Modelpromoter.py | "
+        f"ROC-AUC={roc_auc:.4f} | Recall={recall:.4f} | "
+        f"run_id={run_id}"
     )
 
-# Update metadata
-    model.tags = {
-    "stage": "production",
-    "roc_auc": str(round(roc_auc, 4)),
-    "recall": str(round(recall, 4)),
-    "run_id": run_id,
-    "promoted_by": "model_promoter.py",
-}
+    ml_client.models.create_or_update(new_model)
+    print(f"Version {version_number} tagged as → production")
 
-    model.description = (
-    f"Promoted by model_promoter.py | "
-    f"ROC-AUC={roc_auc:.4f} | Recall={recall:.4f} | "
-    f"run_id={run_id}"
-)
 
-    ml_client.models.create_or_update(model)
-
+    # Archive any previously-production versions
 
     for v in versions[1:]:
-        tags = v.tags or {}
-
-        if tags.get("stage") == "production":
-            old_model = ml_client.models.get(
-            name=model_name,
-            version=v.version
-            )
-
-            old_model.tags = {**tags, "stage": "archived"}
-
+        v_tags = v.tags or {}
+        if v_tags.get("stage") == "production":
+            old_model = ml_client.models.get(name=model_name, version=v.version)
+            old_model.tags = {**v_tags, "stage": "archived"}
             ml_client.models.create_or_update(old_model)
+            print(f"Version {v.version} tagged as → archived (previous production)")
 
-            print(f"Version {v.version} is tagged as archived (was previous production)")
+    print(f"\nPromotion complete. '{model_name}' v{version_number} is now Production.\n")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model_output", required=True,
-                        help="Folder containing run_info.json written by train.py")
+    parser = argparse.ArgumentParser(
+        description="Quality gate + promote model to Production in Azure ML registry"
+    )
+    parser.add_argument(
+        "--model_output",
+        required=True,
+        help="Folder containing run_info.json written by train.py",
+    )
     args = parser.parse_args()
     promote_model(args.model_output)
