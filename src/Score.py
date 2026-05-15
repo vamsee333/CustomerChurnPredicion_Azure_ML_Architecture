@@ -4,7 +4,10 @@ import joblib
 from predict import build_inference_row
 
 # declared for monkey-patching in tests
-# Test comments
+# Test_comment
+
+
+
 MODEL        = None
 FEATURE_COLS = None
 
