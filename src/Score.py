@@ -29,17 +29,21 @@ def run(raw_data):
     # raw_data is a JSON string from the HTTP request body
     payload = json.loads(raw_data)
     predictions = []
-    if "input_data" in payload:
-            payload = payload["input_data"][0]
-    # call your existing build_inference_row logic
-    df = build_inference_row(payload, FEATURE_COLS)
-    prediction = int(MODEL.predict(df)[0])
-    proba      = MODEL.predict_proba(df)[0]
-    predictions.append({
-                "churn_prediction":       prediction,
-                "churn_prediction_label": "Churn" if prediction == 1 else "No Churn",
-                "probability_no_churn":   round(float(proba[0]), 4),
-                "probability_churn":      round(float(proba[1]), 4),
-            })
-    
+
+    # Support both a list under "input_data" and a bare list
+    records = payload.get("input_data", payload) if isinstance(payload, dict) else payload
+    if not isinstance(records, list):
+        records = [records]
+
+    for record in records:
+        df         = build_inference_row(record, FEATURE_COLS)
+        prediction = int(MODEL.predict(df)[0])
+        proba      = MODEL.predict_proba(df)[0]
+        predictions.append({
+            "churn_prediction":       prediction,
+            "churn_prediction_label": "Churn" if prediction == 1 else "No Churn",
+            "probability_no_churn":   round(float(proba[0]), 4),
+            "probability_churn":      round(float(proba[1]), 4),
+        })
+
     return json.dumps({"predictions": predictions})
