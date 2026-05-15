@@ -52,9 +52,9 @@ on:
         default: "Manual trigger"
 
 jobs:
-  # ---------------------------------------------------------------------------
+
   # JOB 1: Submit the Azure ML Training Pipeline
-  # ---------------------------------------------------------------------------
+  
   submit-pipeline:
     name: Submit Azure ML Pipeline
     runs-on: ubuntu-latest
@@ -91,11 +91,11 @@ jobs:
             azureml-mlflow==1.57.0 \
             marshmallow==3.20.1
 
-      # -----------------------------------------------------------------------
+      
       # Validate secrets BEFORE running Pipeline.py
       # If any secret is missing/empty, this step fails with a clear message
       # instead of a cryptic Azure ResourceNotFound error later.
-      # -----------------------------------------------------------------------
+   
       - name: Validate required secrets
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -121,11 +121,11 @@ jobs:
           print(f"  Subscription  : {secrets['AZURE_SUBSCRIPTION_ID'][:8]}...")
           PYEOF
 
-      # -----------------------------------------------------------------------
+
       # Submit Pipeline.py
       # Env vars are injected here — Pipeline.py reads them directly,
       # no config.json file needed on the runner
-      # -----------------------------------------------------------------------
+     
       - name: Submit Azure ML Pipeline
         id: submit
         env:
@@ -140,10 +140,10 @@ jobs:
           echo "Submitted job: $JOB_NAME"
           exit $EXIT_CODE
 
-      # -----------------------------------------------------------------------
+      
       # Poll the job status every 60 s until it reaches a terminal state.
       # Azure ML pipeline jobs can take 15-40 min on a cold compute cluster.
-      # -----------------------------------------------------------------------
+      
       - name: Wait for pipeline to complete
         run: |
           JOB_NAME="${{ steps.submit.outputs.job_name }}"
@@ -184,10 +184,10 @@ jobs:
           echo "::error::Timed out after ${MAX_WAIT}s waiting for job $JOB_NAME"
           exit 1
 
-  # ---------------------------------------------------------------------------
+
   # JOB 2: Update the Managed Online Endpoint
   # Hard dependency on Job 1 — never deploys if pipeline failed or was skipped
-  # ---------------------------------------------------------------------------
+  
   update-endpoint:
     name: Update Managed Online Endpoint
     runs-on: ubuntu-latest
@@ -217,14 +217,14 @@ jobs:
             azureml-mlflow==1.57.0 \
             marshmallow==3.20.1
 
-      # -----------------------------------------------------------------------
+   
       # Write .azureml/config.json for Deploy_endpoint.py
       #
       # IMPORTANT: The heredoc delimiter is unquoted so ${{ }} expressions
       # ARE expanded by the shell (that is what we want here).
       # The JSON content itself has no leading whitespace — heredoc indentation
       # would be written literally into the file and break json.load().
-      # -----------------------------------------------------------------------
+      
       - name: Write Azure ML config.json
         run: |
           mkdir -p .azureml
@@ -266,10 +266,10 @@ jobs:
           python azure/Deploy_endpoint.py
           echo "Endpoint updated: churn-prediction-endpoint / champion"
 
-      # -----------------------------------------------------------------------
+     
       # Smoke test — one real HTTP request to the live endpoint.
       # Verifies the scoring script is responsive and returns expected keys.
-      # -----------------------------------------------------------------------
+    
       - name: Smoke test endpoint
         env:
           ENDPOINT_KEY: ${{ secrets.CHURN_ENDPOINT_KEY }}
