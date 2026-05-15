@@ -329,10 +329,30 @@ jobs:
               with urllib.request.urlopen(req, timeout=30) as resp:
                   result = json.loads(resp.read())
               print("Smoke test response:", result)
-              assert "churn_prediction" in result, \
-                  f"Missing 'churn_prediction' key in response: {result}"
-              assert result["churn_prediction"] in (0, 1), \
-                  f"Unexpected prediction value: {result['churn_prediction']}"
+ 
+              # Response shape from Score.py:
+              # {"predictions": [{"churn_prediction": 0|1,
+              #   "churn_prediction_label": "Churn"|"No Churn",
+              #   "probability_no_churn": float, "probability_churn": float}]}
+              assert "predictions" in result, \
+                  f"Missing 'predictions' key in response: {result}"
+              assert isinstance(result["predictions"], list) and len(result["predictions"]) > 0, \
+                  f"'predictions' is empty or not a list: {result}"
+ 
+              pred = result["predictions"][0]
+              assert "churn_prediction" in pred, \
+                  f"Missing 'churn_prediction' in prediction: {pred}"
+              assert pred["churn_prediction"] in (0, 1), \
+                  f"Unexpected prediction value: {pred['churn_prediction']}"
+              assert "probability_churn" in pred, \
+                  f"Missing 'probability_churn' in prediction: {pred}"
+              assert 0.0 <= pred["probability_churn"] <= 1.0, \
+                  f"probability_churn out of range: {pred['probability_churn']}"
+ 
+              print(f"  churn_prediction      : {pred['churn_prediction']}")
+              print(f"  churn_prediction_label: {pred['churn_prediction_label']}")
+              print(f"  probability_churn     : {pred['probability_churn']}")
+              print(f"  probability_no_churn  : {pred['probability_no_churn']}")
               print("Smoke test PASSED")
           except urllib.error.HTTPError as e:
               body = e.read().decode("utf-8", errors="ignore")
@@ -342,5 +362,3 @@ jobs:
               print(f"Smoke test FAILED: {e}", file=sys.stderr)
               sys.exit(1)
           PYEOF
-
- 
