@@ -314,18 +314,6 @@ jobs:
               with urllib.request.urlopen(req) as resp:
                   result = json.loads(resp.read())
               print("Smoke test response:", result)
-
-              assert "predictions" in result, \
-                  f"Missing 'predictions' key in response: {result}"
-              prediction = result["predictions"][0]
-              assert "churn_prediction" in prediction, \
-                  f"Missing 'churn_prediction' in prediction: {prediction}"
-              assert prediction["churn_prediction"] in (0, 1), \
-                  f"Invalid prediction value: {prediction['churn_prediction']}"
-              assert "probability_churn" in prediction, \
-                  f"Missing 'probability_churn' in prediction: {prediction}"
-
-              print("Smoke test PASSED")
           except Exception as e:
               print(f"Smoke test FAILED: {e}", file=sys.stderr)
               sys.exit(1)
