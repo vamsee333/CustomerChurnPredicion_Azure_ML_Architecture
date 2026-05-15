@@ -26,12 +26,15 @@ def init():
 
 
 def run(raw_data):
+    # raw_data is a JSON string from the HTTP request body
     payload = json.loads(raw_data)
-
-    # Support both single and batch inputs
-    records = payload.get("input_data", [payload])
-
     predictions = []
+
+    # Support both a list under "input_data" and a bare list
+    records = payload.get("input_data", payload) if isinstance(payload, dict) else payload
+    if not isinstance(records, list):
+        records = [records]
+
     for record in records:
         df         = build_inference_row(record, FEATURE_COLS)
         prediction = int(MODEL.predict(df)[0])
