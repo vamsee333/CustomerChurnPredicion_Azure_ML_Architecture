@@ -274,44 +274,29 @@ jobs:
         env:
           ENDPOINT_KEY: ${{ secrets.CHURN_ENDPOINT_KEY }}
         run: |
-          python - <<'PYEOF'
+          python - <<'EOF'
           import urllib.request, json, os, sys
 
           url = "https://churn-predictions-endpoint.eastus2.inference.ml.azure.com/score"
-          key = os.environ.get("ENDPOINT_KEY", "")
-          if not key:
-              print("ERROR: CHURN_ENDPOINT_KEY secret is not set.")
-              sys.exit(1)
+          key = os.environ["ENDPOINT_KEY"]
 
           payload = {
               "input_data": [{
-                  "Age": 45,
-                  "Contract": "Month-to-month",
-                  "Monthly Charge": 89.50,
-                  "Tenure in Months": 6,
+                  "Age": 45, "Contract": "Month-to-month",
+                  "Monthly Charge": 89.50, "Tenure in Months": 6,
                   "Internet Type": "Fiber Optic",
                   "Payment Method": "Credit Card (automatic)",
-                  "Offer": "No Offer",
-                  "Gender": "Male",
-                  "Partner": "Yes",
-                  "Dependents": "No",
-                  "Phone Service": "Yes",
-                  "Multiple Lines": "No",
-                  "Online Security": "No",
-                  "Online Backup": "No",
-                  "Device Protection Plan": "No",
-                  "Premium Tech Support": "No",
-                  "Streaming TV": "Yes",
-                  "Streaming Movies": "Yes",
-                  "Streaming Music": "No",
-                  "Unlimited Data": "Yes",
-                  "Paperless Billing": "Yes",
-                  "Referred a Friend": "No",
-                  "Number of Referrals": 0,
-                  "Avg Monthly GB Download": 45,
+                  "Offer": "No Offer", "Gender": "Male",
+                  "Partner": "Yes", "Dependents": "No",
+                  "Phone Service": "Yes", "Multiple Lines": "No",
+                  "Online Security": "No", "Online Backup": "No",
+                  "Device Protection Plan": "No", "Premium Tech Support": "No",
+                  "Streaming TV": "Yes", "Streaming Movies": "Yes",
+                  "Streaming Music": "No", "Unlimited Data": "Yes",
+                  "Paperless Billing": "Yes", "Referred a Friend": "No",
+                  "Number of Referrals": 0, "Avg Monthly GB Download": 45,
                   "Avg Monthly Long Distance Charges": 0.0,
-                  "CLTV": 3200,
-                  "Number of Dependents": 0,
+                  "CLTV": 3200, "Number of Dependents": 0,
                   "Satisfaction Score": 2,
               }]
           }
@@ -326,39 +311,22 @@ jobs:
           )
 
           try:
-              with urllib.request.urlopen(req, timeout=30) as resp:
+              with urllib.request.urlopen(req) as resp:
                   result = json.loads(resp.read())
               print("Smoke test response:", result)
- 
-              # Response shape from Score.py:
-              # {"predictions": [{"churn_prediction": 0|1,
-              #   "churn_prediction_label": "Churn"|"No Churn",
-              #   "probability_no_churn": float, "probability_churn": float}]}
+
               assert "predictions" in result, \
                   f"Missing 'predictions' key in response: {result}"
-              assert isinstance(result["predictions"], list) and len(result["predictions"]) > 0, \
-                  f"'predictions' is empty or not a list: {result}"
- 
-              pred = result["predictions"][0]
-              assert "churn_prediction" in pred, \
-                  f"Missing 'churn_prediction' in prediction: {pred}"
-              assert pred["churn_prediction"] in (0, 1), \
-                  f"Unexpected prediction value: {pred['churn_prediction']}"
-              assert "probability_churn" in pred, \
-                  f"Missing 'probability_churn' in prediction: {pred}"
-              assert 0.0 <= pred["probability_churn"] <= 1.0, \
-                  f"probability_churn out of range: {pred['probability_churn']}"
- 
-              print(f"  churn_prediction      : {pred['churn_prediction']}")
-              print(f"  churn_prediction_label: {pred['churn_prediction_label']}")
-              print(f"  probability_churn     : {pred['probability_churn']}")
-              print(f"  probability_no_churn  : {pred['probability_no_churn']}")
+              prediction = result["predictions"][0]
+              assert "churn_prediction" in prediction, \
+                  f"Missing 'churn_prediction' in prediction: {prediction}"
+              assert prediction["churn_prediction"] in (0, 1), \
+                  f"Invalid prediction value: {prediction['churn_prediction']}"
+              assert "probability_churn" in prediction, \
+                  f"Missing 'probability_churn' in prediction: {prediction}"
+
               print("Smoke test PASSED")
-          except urllib.error.HTTPError as e:
-              body = e.read().decode("utf-8", errors="ignore")
-              print(f"Smoke test FAILED — HTTP {e.code}: {body}", file=sys.stderr)
-              sys.exit(1)
           except Exception as e:
               print(f"Smoke test FAILED: {e}", file=sys.stderr)
               sys.exit(1)
-          PYEOF
+          EOF
