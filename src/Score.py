@@ -14,15 +14,25 @@ FEATURE_COLS = None
 def init():
     model_dir = os.environ.get("AZUREML_MODEL_DIR", ".")
 
-    # Azure ML can mount the artifact at root or in a sub-folder named "model"
-    nested = os.path.join(model_dir, "model", "model.pkl")
-    root   = os.path.join(model_dir, "model.pkl")
-    model_path = nested if os.path.exists(nested) else root
+    # Champion path (registered via mlflow): model/model.pkl
+    # Challenger path (registered via SDK):  challenger_model/model.pkl
+    # This searches all subdirectories so it works for both
+    
+    model_path = None
+    for root, dirs, files in os.walk(model_dir):
+        if "model.pkl" in files:
+            model_path = os.path.join(root, "model.pkl")
+            break
 
-    feat_path = model_path.replace("model.pkl", "feature_columns.json")
+    if model_path is None:
+        raise FileNotFoundError(f"model.pkl not found anywhere under {model_dir}")
+
+    feat_path = os.path.join(os.path.dirname(model_path), "feature_columns.json")
+
+    if not os.path.exists(feat_path):
+        raise FileNotFoundError(f"feature_columns.json not found at {feat_path}")
 
     global MODEL, FEATURE_COLS
-
     MODEL        = joblib.load(model_path)
     FEATURE_COLS = json.load(open(feat_path))
     print(f"[init] Model loaded from: {model_path}")
